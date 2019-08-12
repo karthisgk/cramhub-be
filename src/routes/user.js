@@ -97,7 +97,16 @@ function User() {
 					});
 				}
 
-				res.json(common.getResponses('020', rt));
+				var sendResponse = (rt) => {res.json(common.getResponses('020', rt))};
+
+				if(req.query.atUser && rt.activeUser.length == 1){
+					self.getFollowers(rt.activeUser[0].userId, followers => {
+						rt.activeUser[0].followers = followers;
+						sendResponse(rt);
+					});
+				}else
+					sendResponse(rt);
+				
 		  	});
 		});
 	};
@@ -168,7 +177,7 @@ function User() {
 		});
 	};
 
-	this.Get_Me = function(req, res){
+	this.Get_Me = (req, res) => {
 		if(!req.hasOwnProperty('accessToken') || !req.hasOwnProperty('accessUser')){
 			res.json(common.getResponses('005', {}));
 			return;
@@ -186,6 +195,13 @@ function User() {
 		delete user.accessToken;
 		delete user.Verification_Mail;
 
+		var sendResponse = (user) => {
+			this.getFollowers(user.userId, (followers) => {
+				user.followers = followers;
+				res.json(common.getResponses('020', user));
+			});
+		};
+
 		if(req.accessUser.chatConversations){
 			var cts = typeof user.chatConversations == 'string'
 			 ? [user.chatConversations]
@@ -193,10 +209,10 @@ function User() {
 			self.db.get('user', {chatConversations: {$elemMatch: {$in: cts}},
 				_id: {$ne: user._id}}, (users) => {
 					user.chatUsers = users;
-					res.json(common.getResponses('020', user));
+					sendResponse(user);
 			});
 		}else
-	  	res.json(common.getResponses('020', user));
+			sendResponse(user);
 	};
 
 
@@ -459,6 +475,9 @@ function User() {
 				UPD.DOB = dob[2] + '-' + dob[1] + '-' + dob[0];
 		}
 
+		if(typeof req.body.isPrivate != 'undefined')
+			UPD.isPrivate = req.body.isPrivate;
+
 
 		var avatarExt = avatarFileName = avatarTargetPath = '';
 		var avatarDir = './src/uploads/avatars/';
@@ -505,7 +524,48 @@ function User() {
 			res.json(common.getResponses('002', {avatarDir: config.liveUrl + 'image/avatars/'}));
 		});
 	};
-}
+};
+
+User.prototype.tiggerFollow = function(req, res) {
+
+
+	if(!req.hasOwnProperty('accessToken') ||
+		!req.hasOwnProperty('accessUser')){
+		res.json(common.getResponses('005', {}));
+		return;
+	}
+
+	if(!req.body.followingId){
+		res.json(common.getResponses('003', {}));
+		return;
+	}
+	var followingId = req.body.followingId;
+	var $wh = {_id: req.accessUser._id};
+	config.db.get('user', $wh, 
+		user => {
+		var followings = [];
+		var UPD = {};
+		if(user.length > 0){
+			user = user[0];
+			followings = user.followings ? user.followings : [];
+			var index = followings.indexOf(followingId);
+			if(index > -1)
+				followings.splice(index, 1);
+			else
+				followings.push(followingId);
+			config.db.update('user', $wh, {followings: followings}, (err, result) => {
+				res.json(common.getResponses('020', {action: index > -1}));
+			});
+		}else
+			res.json(common.getResponses('003', {}));
+	});
+};
+
+User.prototype.getFollowers = (userId, cb) => {
+	config.db.get('user', {followings: {$all: [userId]}}, followers => {
+		cb(followers);
+	});
+};
 
 module.exports = User;
 

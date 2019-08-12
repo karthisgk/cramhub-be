@@ -16,16 +16,18 @@ Post.prototype.index = function(req, res, next) {
 		return;
 	}
 
-	if(!req.body.caption ||
-		!req.body.univ ||
-		!req.body.youtubeLinks ||
-		!req.body.studyContent) {
+	if(typeof req.body.caption == 'undefined' ||
+		typeof req.body.univ == 'undefined' ||
+		typeof req.body.youtubeLinks == 'undefined' ||
+		typeof req.body.studyContent == 'undefined') {
 		res.json(common.getResponses('003', {}));
 		return;
 	}
 
 	var dbFields = {		
 		caption: req.body.caption,
+		hashArray: common.getHashArray(req.body.caption),
+		tagArray: common.getTagArray(req.body.caption),
 		univ: req.body.univ,
 		youtubeLinks: req.body.youtubeLinks,
 		studyContent: req.body.studyContent,
@@ -149,10 +151,16 @@ Post.prototype.getInitialLookups = (dbCollection = {}) => {
 
 Post.prototype.getData = (req, res) => {
 
+	if(!req.hasOwnProperty('accessUser')){
+		res.json(common.getResponses('020', []));
+		return;
+	}
+
+
 	var $this = new Post();
 	var lookups = $this.getInitialLookups({user: true, comments: true});
 	lookups.push({ $project : { "user.password": 0, "user.Verification_Mail" : 0 , "user.accessToken" : 0 } });
-	var sortAsDesc = typeof req.query.sortAsDesc != 'undefined' ? -1 : 1;
+	var sortAsDesc = typeof req.query.sortAsDesc == 'undefined' ? -1 : 1;
 	if(req.query.sortBy){
 		if(['caption', 'studyContent', 'codeContent', 'univ'].indexOf(req.query.sortBy) > -1){
 			var sortObject = {};
@@ -163,49 +171,121 @@ Post.prototype.getData = (req, res) => {
 			lookups.push({ $sort : {createdDate: sortAsDesc} });
 	}else
 		lookups.push({ $sort : {createdDate: sortAsDesc} });
+	var matchAnd = [];
 
 	if(req.body.searchText){
 		var searchText = req.body.searchText;
 		var $pattern = new RegExp(searchText, 'i');
-		lookups.push({
-			$match: {
-				$or: [
-					{caption: {$regex: $pattern}},
-					{univ: {$regex: $pattern}},
-					{studyContent: {$regex: $pattern}},
-					{codeContent: {$regex: $pattern}},
-					{"user.name": {$regex: $pattern}},
-					{"user.univ": {$regex: $pattern}}
-				]
-			}
+		var matches = {
+			$or: [
+				{caption: {$regex: $pattern}},
+				{univ: {$regex: $pattern}},
+				{studyContent: {$regex: $pattern}},
+				{codeContent: {$regex: $pattern}},
+				{"user.name": {$regex: $pattern}},
+				{"user.univ": {$regex: $pattern}}
+			]
+		};
+		matchAnd.push({
+			$or: [
+				{
+					$and: [
+						{"user.isPrivate": 1},
+						{"user.userId": {$in: req.accessUser.followings}},
+						matches
+					]
+				},
+				{
+					$and: [
+						{"user.isPrivate": {$ne: 1}},
+						matches
+					]
+				},
+			]
 		});
 	}
 
-	if(req.body.hashTag) {
+	else if(req.body.hashTag) {
 		var hashTag = req.body.hashTag;
 		if(/^#/ig.test(hashTag)) {
 			var $pattern = new RegExp(hashTag, 'i');
-			lookups.push({
-				$match: {
-					$or: [
-						{caption: {$regex: $pattern}},
-						{"user.univ": {$regex: $pattern}}
-					]
-				}
+			var univSearch = new RegExp(hashTag.replace(/^#/ig, '').replace(/_/ig, ' '), 'i');
+			var matches = {
+				$or: [
+					{caption: {$regex: $pattern}},
+					{"user.univ": {$regex: univSearch}}
+				]
+			};
+			matchAnd.push({
+				$or: [
+					{
+						$and: [
+							{"user.isPrivate": 1},
+							{"user.userId": {$in: req.accessUser.followings}},
+							matches
+						]
+					},
+					{
+						$and: [
+							{"user.isPrivate": {$ne: 1}},
+							matches
+						]
+					},
+				]
 			});
 		}
 	}
 
-	if(req.body.atUser) {
+	else if(req.body.atUser) {
 		var atUser = req.body.atUser;
-		lookups.push({
-			$match: {
-				$and: [
-					{"user.userId": atUser}
-				]
-			}
+		matchAnd.push({
+			$or: [
+				{
+					$and: [
+						{"user.userId": atUser},
+						{"user.isPrivate": 1},
+						{"user.userId": {$in: req.accessUser.followings}}
+					]
+				},
+				{
+					$and: [
+						{"user.userId": atUser},
+						{"user.isPrivate": {$ne: 1}}
+					]
+				},
+			]
 		});
+	}else{
+		if(typeof req.accessUser.followings == 'object'){
+			matchAnd.push({
+				$or: [
+					{"user._id": req.accessUser._id},
+					{
+						$and: [
+							{"user.isPrivate": 1},
+							{"user.userId": {$in: req.accessUser.followings}}
+						]
+					},
+					{
+						$and: [
+							{"user.isPrivate": {$ne: 1}},
+							{
+								$or: [
+									{"user.userId": {$in: req.accessUser.followings}},
+									{hashArray : {$in: common.getHashTagFromFollowings(req.accessUser.followings)}},
+									{"user.univ": {$regex: new RegExp(req.accessUser.univ, 'i')}}
+								]
+							}
+						]
+					}
+				]
+			});
+		}
+		else
+			matchAnd.push({"user._id": req.accessUser._id});
 	}
+
+	lookups.push({ $match: {$and: matchAnd} });
 
 	if(req.query.offset) {
 		var lmt = typeof req.query.limit == 'undefined' ? 10 : req.query.limit;
@@ -215,7 +295,7 @@ Post.prototype.getData = (req, res) => {
 	}
 
 	config.db.customGetData('post', lookups,  (err, data) => {
-		res.json(common.getResponses('020', data));
+		res.json(common.getResponses('020', data ? data : []));
 	});
 
 };

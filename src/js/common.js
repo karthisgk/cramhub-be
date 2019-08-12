@@ -357,6 +357,33 @@ var common = {
 		    return self.indexOf(value) === index;
 		} );
 	},
+	getHashArray: (caption) => {
+		var ar = caption.split(' ');
+		var rt = [];
+		ar.forEach((ele, ind) => {
+			if(/^#/ig.test(ele))
+				rt.push(ele);
+		});
+		return rt;
+	},
+	getTagArray: (caption) => {
+		var ar = caption.split(' ');
+		var rt = [];
+		ar.forEach((ele, ind) => {
+			if(/^@/ig.test(ele))
+				rt.push(ele);
+		});
+		return rt;
+	},
+	getHashTagFromFollowings: (followings) => {
+		followings = typeof followings.length == 'number' ? followings : [];
+		var rt = [];
+		followings.forEach((ele, ind) => {
+			if(/^#/ig.test(ele))
+				rt.push(ele);
+		});
+		return rt;
+	},
 	MD5: function (string) {
 
 	    function RotateLeft(lValue, iShiftBits) {

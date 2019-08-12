@@ -32,6 +32,8 @@ function Routes(app){
 	app.post('/dopost', Post.getMulterObject(), User.auth(), Post.index, Post.saveImages);
 	app.post('/getpost',  User.auth(), clearInput, Post.getData);
 
+	app.post('/tiggerfollow', User.auth(), User.tiggerFollow);
+
 	app.get('/image/:dir/:img', function(req, res){
 
 		if(!req.params.hasOwnProperty('img')){
