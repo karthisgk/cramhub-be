@@ -84,6 +84,16 @@ DB.prototype.get =  function(tbName, wh, cb){
 	});
 };
 
+DB.prototype.getCount =  function(tbName, wh, cb){
+	this.connect(function(db){
+		if(typeof wh.length === "undefined"){
+			db.collection(tbName).find(wh).count(function (e, count) {
+		      	return cb(count);
+		    });
+		}
+	});
+};
+
 DB.prototype.customGetData = function(tbName, lookups, cb){
 	this.connect(function(db){
 		db.collection(tbName).aggregate(lookups, cb);

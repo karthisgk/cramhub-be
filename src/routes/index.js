@@ -28,11 +28,15 @@ function Routes(app){
 	app.get('/getuser/:type', User.auth(), clearInput, User.getUser);
 	app.get('/getuser', User.auth(), clearInput, User.getUser);
 	app.post('/gethashtags', User.auth(), clearInput, HashTag.getHashTag);
+	app.post('/gethashtagfollowers', HashTag.getFollowers);
 
+	app.post('/uploadpostfiles', User.auth(), Post.getMulterObject(), Post.beforeUpload);
 	app.post('/dopost', Post.getMulterObject(), User.auth(), Post.index, Post.saveImages);
 	app.post('/getpost',  User.auth(), clearInput, Post.getData);
 
 	app.post('/tiggerfollow', User.auth(), User.tiggerFollow);
+	app.post('/acceptfollowrequest', User.auth(), User.acceptFollowRequest);
+	app.get('/getnotifications', User.auth(), User.getNotifications);
 
 	app.get('/image/:dir/:img', function(req, res){
 

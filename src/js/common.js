@@ -323,7 +323,13 @@ var common = {
 		var upload = multer({ storage: storage, 
 		limits: { fieldSize: 25 * 1024 * 1024 },
 		fileFilter: function (req, file, cb) {
-		    if(['image/png', 'image/jpg', 'image/jpeg'].indexOf(file.mimetype) != -1){
+			var accept = ['image/png', 'image/jpg', 'image/jpeg'];
+			if(cfg.accept)
+				accept = accept.concat(cfg.accept);
+			if(cfg.acceptAll){
+				cb(null, true);
+		    	return;
+		    }else if(accept.indexOf(file.mimetype) != -1){
 		    	cb(null, true);
 		    	return;
 			}else{

@@ -97,11 +97,28 @@ function User() {
 					});
 				}
 
-				var sendResponse = (rt) => {res.json(common.getResponses('020', rt))};
+				var syncCount = 0, actualCount = 0;
+				var sendResponse = (rt) => {
+					if(actualCount != syncCount)
+						return;
+					res.json(common.getResponses('020', rt));
+				};
 
 				if(req.query.atUser && rt.activeUser.length == 1){
+					syncCount = 2;
+					rt.activeUser[0].isFollowed = false;
+					if(req.hasOwnProperty('accessUser')){
+						if(req.accessUser.followings)
+							rt.activeUser[0].isFollowed = req.accessUser.followings.indexOf(rt.activeUser[0].userId) > -1;
+					}
 					self.getFollowers(rt.activeUser[0].userId, followers => {
-						rt.activeUser[0].followers = followers;
+						actualCount++;
+						rt.activeUser[0].followers = followers;						
+						sendResponse(rt);
+					});
+					self.db.getCount('post', {userId: rt.activeUser[0]._id}, postCount => {
+						actualCount++;
+						rt.activeUser[0].postCount = postCount;
 						sendResponse(rt);
 					});
 				}else
@@ -194,25 +211,37 @@ function User() {
 		delete user.password;
 		delete user.accessToken;
 		delete user.Verification_Mail;
+		var syncCount = 1, actualCount = 0;	
 
 		var sendResponse = (user) => {
+
+			if(actualCount != syncCount)
+				return;
+
 			this.getFollowers(user.userId, (followers) => {
 				user.followers = followers;
 				res.json(common.getResponses('020', user));
 			});
 		};
 
+		self.db.getCount('post', {userId: user._id}, postCount => {
+			actualCount++;
+			user.postCount = postCount;
+			sendResponse(user);
+		});
+
 		if(req.accessUser.chatConversations){
+			syncCount++;
 			var cts = typeof user.chatConversations == 'string'
 			 ? [user.chatConversations]
 			 : user.chatConversations;
 			self.db.get('user', {chatConversations: {$elemMatch: {$in: cts}},
 				_id: {$ne: user._id}}, (users) => {
 					user.chatUsers = users;
+					actualCount++;
 					sendResponse(user);
 			});
-		}else
-			sendResponse(user);
+		}
 	};
 
 
@@ -548,22 +577,140 @@ User.prototype.tiggerFollow = function(req, res) {
 		if(user.length > 0){
 			user = user[0];
 			followings = user.followings ? user.followings : [];
+			var followRequest = user.followRequest ? user.followRequest : [];
 			var index = followings.indexOf(followingId);
-			if(index > -1)
+			var reqIndex = followRequest.indexOf(followingId);
+			var state = '';
+			if(req.body.followRequest){
+				if(reqIndex == -1){
+					state = 'requested';
+					followRequest.push(followingId);					
+				}
+				else{
+					state = 'unrequested';
+					followRequest.splice(reqIndex, 1);
+				}
+				new User().sendFollowRequest(req.accessUser.userId, followingId, state);
+			}
+			else if(index == -1){
+				state = 'followed';
+				followings.push(followingId);		
+			}
+			else if(index > -1){
+				state = 'unfollowed';
 				followings.splice(index, 1);
-			else
-				followings.push(followingId);
-			config.db.update('user', $wh, {followings: followings}, (err, result) => {
-				res.json(common.getResponses('020', {action: index > -1}));
+			}
+			UPD.followings = followings;
+			UPD.followRequest = followRequest;
+			config.db.update('user', $wh, UPD, (err, result) => {
+				res.json(common.getResponses('020', {action: index > -1, state: state, ct: common.current_time()}));
 			});
 		}else
 			res.json(common.getResponses('003', {}));
 	});
 };
 
+User.prototype.sendFollowRequest = (from, to, state = 'requested') => {
+	if(state == 'requested') {
+		var dbField = {
+			_id: common.getMongoObjectId(),
+			from: from,
+			to: to,
+			type: 'followrequest',
+			message: 'request to follow you',
+			createdAt: common.current_time()
+		};
+		config.db.insert('notifications', dbField, (err, result) => {
+		});
+	}else{
+		const $wh = {from: from, to: to};
+		config.db.connect((ndb) => {
+			ndb.collection('notifications', (err, collection) => {
+				collection.deleteOne($wh, function(err, results) {
+			    });
+			});
+		});
+	}
+};
+
+User.prototype.getNotifications = (req, res) => {
+	if(!req.hasOwnProperty('accessToken') ||
+		!req.hasOwnProperty('accessUser')){
+		res.json(common.getResponses('005', {}));
+		return;
+	}
+
+	const $wh = {to: req.accessUser.userId};
+	var lookups = [];
+	var mergeObjects = ["$$ROOT"];
+	lookups.push({
+		$lookup: {
+			from: 'user',
+			localField: 'from',
+			foreignField: 'userId',
+			as: 'user'
+		}
+	});
+	mergeObjects.push({user: { $arrayElemAt: [ "$user", 0 ] }});
+	lookups.push({
+		$replaceRoot: {
+	        newRoot: {
+	            $mergeObjects: mergeObjects
+	        }
+	    }
+    });
+	lookups.push({ $project : { 'user.password': 0, 'user.Verification_Mail' : 0 , 'user.accessToken' : 0 } });
+	lookups.push({ $match: {$and: [$wh]} });
+	if(req.query.offset) {
+		var lmt = typeof req.query.limit == 'undefined' ? 10 : req.query.limit;
+		lmt = parseInt(req.query.offset) + lmt;
+		lookups.push({ $limit: parseInt(lmt)});
+		lookups.push({ $skip: parseInt(req.query.offset)});
+	}
+	config.db.customGetData('notifications', lookups, (err, data) => {
+		res.json(common.getResponses('020', data));
+	});
+};
+
 User.prototype.getFollowers = (userId, cb) => {
 	config.db.get('user', {followings: {$all: [userId]}}, followers => {
 		cb(followers);
+	});
+};
+
+User.prototype.acceptFollowRequest = (req, res) => {
+	if(!req.hasOwnProperty('accessToken') ||
+		!req.hasOwnProperty('accessUser')){
+		res.json(common.getResponses('005', {}));
+		return;
+	}
+
+	if(!req.body.followerId){
+		res.json(common.getResponses('003', {}));
+		return;
+	}
+	var followerId = req.body.followerId;
+	var $wh = {userId: followerId};
+	config.db.get('user', $wh, user => {		
+		var UPD = {};
+		if(user.length > 0){
+			user = user[0];
+			var followings = user.followings ? user.followings : [];
+			var index = followings.indexOf(req.accessUser.userId);
+			var followRequest = user.followRequest ? user.followRequest : [];
+			var reqIndex = followRequest.indexOf(req.accessUser.userId);			
+			if(reqIndex > -1)
+				followRequest.splice(reqIndex, 1);
+			if(index == -1)
+				followings.push(req.accessUser.userId);
+			UPD.followRequest = followRequest;
+			UPD.followings = followings;
+			config.db.update('user', $wh, UPD, (err, result) => {
+				res.json(common.getResponses('020', {state: 'accepted'}));
+			});
+			new User().sendFollowRequest(followerId, req.accessUser.userId, 'unrequested');
+		}else
+			res.json(common.getResponses('003', {}));
 	});
 };
 

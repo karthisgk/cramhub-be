@@ -38,7 +38,10 @@ Post.prototype.index = function(req, res, next) {
 
 	var dbAction = function(actionData, cb){
 		if(!req.body.postId){
-			actionData.images = [];
+			actionData.images = req.body.uploadedImage ? 
+								req.body.uploadedImage : [];
+			actionData.additionalFiles = req.body.uploadedFiles ? 
+								req.body.uploadedFiles : [];
 			actionData._id = common.getMongoObjectId();
 			actionData.createdDate = common.current_time();
 			config.db.insert('post', actionData, (err, result) => {
@@ -63,9 +66,31 @@ Post.prototype.index = function(req, res, next) {
 
 Post.prototype.getMulterObject = function(){
 	return common.getFileUploadMiddleware({
-		uploadDir: 'post/'
+		uploadDir: 'post/',
+		acceptAll: true
 	}).array('images');
 };
+
+Post.prototype.beforeUpload = (req, res) => {
+	var dbFieldImages = [];
+	var additionalFiles = [];
+	if(req.hasOwnProperty('files')) {
+		if(req.files.length > 0) {
+			req.files.forEach((file, k) => {
+				if (fs.existsSync(file.path)){
+					if(['image/png', 'image/jpg', 'image/jpeg'].indexOf(file.mimetype) > -1)
+						dbFieldImages.push(file.filename);
+					else
+						additionalFiles.push({name: file.filename, displayName: file.originalname});
+				}
+			});
+		}
+	}
+	res.json(common.getResponses('020', {
+		images: dbFieldImages,
+		additionalFiles: additionalFiles
+	}));
+}
 
 Post.prototype.saveImages = function(req, res) {
 	if(!req.hasOwnProperty('postId') ||
@@ -75,11 +100,16 @@ Post.prototype.saveImages = function(req, res) {
 	}
 
 	var dbFieldImages = [];
+	var additionalFiles = [];
 	if(req.hasOwnProperty('files')) {
 		if(req.files.length > 0) {
 			req.files.forEach((file, k) => {
-				if (fs.existsSync(file.path))
-					dbFieldImages.push(file.filename);
+				if (fs.existsSync(file.path)){
+					if(['image/png', 'image/jpg', 'image/jpeg'].indexOf(file.mimetype) > -1)
+						dbFieldImages.push(file.filename);
+					else
+						additionalFiles.push({name: file.filename, displayName: file.originalname});
+				}
 			});
 		}
 	}
@@ -88,11 +118,12 @@ Post.prototype.saveImages = function(req, res) {
 		req.onAfterUploadCallback(req.postId);
 	};
 	var $wh = {_id: req.postId};
-	var UPD = {images: []};
+	var UPD = {images: [], additionalFiles: []};
 	config.db.get('post', $wh, post => {
 		if(post.length > 0){
 			post = post[0];
 			UPD.images = post.images.concat(dbFieldImages);
+			UPD.additionalFiles = post.additionalFiles.concat(additionalFiles);
 			if(req.body.removedImage && typeof req.body.removedImage.length == 'number'){
 				if(req.body.removedImage.length > 0){
 					req.body.removedImage.forEach((file, k) => {
@@ -104,7 +135,7 @@ Post.prototype.saveImages = function(req, res) {
 					});
 				}
 			}
-			if(UPD.images.length > 0)
+			if(UPD.images.length > 0 || UPD.additionalFiles.length > 0)
 				config.db.update('post', $wh, UPD, callBack);
 			else
 				req.onAfterUploadCallback(req.postId);
@@ -191,7 +222,12 @@ Post.prototype.getData = (req, res) => {
 				{
 					$and: [
 						{"user.isPrivate": 1},
-						{"user.userId": {$in: req.accessUser.followings}},
+						{
+							$or: [
+								{"user.userId": {$in: req.accessUser.followings}},
+								{userId: req.accessUser._id}
+							]
+						},
 						matches
 					]
 				},
@@ -200,7 +236,7 @@ Post.prototype.getData = (req, res) => {
 						{"user.isPrivate": {$ne: 1}},
 						matches
 					]
-				},
+				}
 			]
 		});
 	}
@@ -221,7 +257,12 @@ Post.prototype.getData = (req, res) => {
 					{
 						$and: [
 							{"user.isPrivate": 1},
-							{"user.userId": {$in: req.accessUser.followings}},
+							{
+								$or: [
+									{"user.userId": {$in: req.accessUser.followings}},
+									{userId: req.accessUser._id}
+								]
+							},
 							matches
 						]
 					},
@@ -230,7 +271,7 @@ Post.prototype.getData = (req, res) => {
 							{"user.isPrivate": {$ne: 1}},
 							matches
 						]
-					},
+					}
 				]
 			});
 		}
@@ -244,7 +285,12 @@ Post.prototype.getData = (req, res) => {
 					$and: [
 						{"user.userId": atUser},
 						{"user.isPrivate": 1},
-						{"user.userId": {$in: req.accessUser.followings}}
+						{
+							$or: [
+								{"user.userId": {$in: req.accessUser.followings}},
+								{userId: req.accessUser._id}
+							]
+						}
 					]
 				},
 				{
@@ -257,6 +303,12 @@ Post.prototype.getData = (req, res) => {
 		});
 	}else{
 		if(typeof req.accessUser.followings == 'object'){
+			var publicProfileCritiria = [
+				{"user.userId": {$in: req.accessUser.followings}},
+				{hashArray : {$in: common.getHashTagFromFollowings(req.accessUser.followings)}}				
+			];
+			if(req.accessUser.univ)
+				publicProfileCritiria.push({"user.univ": {$regex: new RegExp(req.accessUser.univ, 'i')}});
 			matchAnd.push({
 				$or: [
 					{"user._id": req.accessUser._id},
@@ -270,11 +322,7 @@ Post.prototype.getData = (req, res) => {
 						$and: [
 							{"user.isPrivate": {$ne: 1}},
 							{
-								$or: [
-									{"user.userId": {$in: req.accessUser.followings}},
-									{hashArray : {$in: common.getHashTagFromFollowings(req.accessUser.followings)}},
-									{"user.univ": {$regex: new RegExp(req.accessUser.univ, 'i')}}
-								]
+								$or: publicProfileCritiria
 							}
 						]
 					}

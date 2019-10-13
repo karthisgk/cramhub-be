@@ -116,4 +116,23 @@ HashTag.prototype.getUserId = (req, cb, type = 2) => {
 	});
 }
 
+HashTag.prototype.getFollowers = (req, res) => {
+	if(!req.body.hashTag){
+		res.json(common.getResponses('020', {followers: 0}));
+		return;
+	}
+
+	var countOnly = req.query.count ? true : false;
+	const action = (p1,p2,p3) => {
+		if(countOnly)
+			config.db.getCount(p1,p2,p3);
+		else
+			config.db.get(p1,p2,p3);
+	};
+	action('user', {followings: {$all: [req.body.hashTag]}}, result => {
+		res.json(common.getResponses('020', {followers: result}));
+		return;
+	});
+}
+
 module.exports = HashTag;
