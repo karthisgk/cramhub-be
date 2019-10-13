@@ -24,7 +24,7 @@ var main = {
 	    }
 	},
 	session_time: 999999999999,
-	liveUrl: 'http://localhost:3500/',
+	liveUrl: 'http://cramapi.karthisgk.be/',
 	initApp: function(dir){
 		main.app_dir = dir;
 		return main;
