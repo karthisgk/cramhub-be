@@ -1,9 +1,16 @@
 
 const MongoClient = require('mongodb').MongoClient;
 const assert = require('assert');
-
-const url = 'mongodb://localhost:27017';
+const url = true ? 'mongodb://karthisgk:vijisgk97@localhost:27017'
+: 'mongodb://karthisgk:vijisgk97@cramapi.karthisgk.be:27017';
 const dbName = 'cramhub';
+
+/*db.createUser(
+   {
+       user: "root", 
+       pwd: "toor", 
+       roles:["root"]
+   })*/
 
 function DB(){
 	this.connect = function(cb){

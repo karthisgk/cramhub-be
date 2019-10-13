@@ -225,7 +225,7 @@ var responses = [
 var common = {
 	encrypt: encrypt,
 	decrypt: decrypt,
-	frontEndUrl: 'http://localhost:8080/',
+	frontEndUrl: 'http://cramhub.karthisgk.be/',
 	uniqueid: function() {
 		  function s4() {
 		    return Math.floor((1 + Math.random()) * 0x10000)
